@@ -97,8 +97,11 @@ async function getCCSubtitle(url){
 
 async function baiduOCR(file,progress){
   const token=await getBaiduToken();if(!token)return'';
-  const video=document.createElement('video');video.src=URL.createObjectURL(file);
-  await new Promise(r=>{video.addEventListener('loadedmetadata',r);video.load()});
+  const video=document.createElement('video');video.preload='metadata';
+  video.src=URL.createObjectURL(file);video.load();
+  await new Promise(r=>{video.onloadeddata=r});
+  await new Promise(r=>setTimeout(r,500));
+  if(!video.videoWidth||!video.videoHeight)return'';
   const dur=video.duration,canvas=document.createElement('canvas'),ctx=canvas.getContext('2d');
   canvas.width=video.videoWidth;canvas.height=video.videoHeight;
   const seen=new Set(),results=[];
