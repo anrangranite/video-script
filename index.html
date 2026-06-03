@@ -37,13 +37,19 @@ input,select{width:100%;padding:10px 14px;border:1.5px solid #e0d5c7;border-radi
   </div>
   <div class="file-area" onclick="document.getElementById('video').click()">
     <input type="file" id="video" accept="video/*,.mp4,.mkv,.avi,.mov">
-    <div style="font-size:2.5rem;margin-bottom:8px">📁</div>
-    <div style="color:#8b7355;font-size:.9rem">点击上传视频文件</div>
+    <div style="font-size:2.5rem;margin-bottom:8px">🎬</div>
+    <div style="color:#8b7355;font-size:.9rem">上传视频 → OCR画面字幕</div>
     <div id="filename" style="color:#a0896e;font-size:.8rem;margin-top:5px"></div>
   </div>
+  <div class="file-area" onclick="document.getElementById('audio').click()" style="border-color:#c4d5e0">
+    <input type="file" id="audio" accept="audio/*,.mp3,.wav,.m4a">
+    <div style="font-size:2.5rem;margin-bottom:8px">🎙️</div>
+    <div style="color:#5a7a9a;font-size:.9rem">上传音频 → 语音识别（mp3/wav）</div>
+    <div id="audiofile" style="color:#a0896e;font-size:.8rem;margin-top:5px"></div>
+  </div>
   <div class="opt-row">
-    <label><input type="checkbox" id="ocr" checked> OCR画面字幕（百度云，免费1000次/月）</label>
-    <label><input type="checkbox" id="asr"> 语音识别（百度云，免费5万次/天）</label>
+    <label><input type="checkbox" id="ocr" checked> OCR画面字幕</label>
+    <label><input type="checkbox" id="asr"> 语音识别（需上传音频文件）</label>
   </div>
   <button class="btn" id="btn" onclick="process()">✨ 开始提取</button>
 </div>
@@ -63,6 +69,9 @@ const ASR_SECRET = "ZILps5tRz1IgFi16XRdJqJlhCzsxem3t";
 
 document.getElementById('video').addEventListener('change', function(e){
   document.getElementById('filename').textContent = e.target.files[0]?.name || '';
+});
+document.getElementById('audio').addEventListener('change', function(e){
+  document.getElementById('audiofile').textContent = e.target.files[0]?.name || '';
 });
 
 async function fetchPOST(url, data){
@@ -95,69 +104,56 @@ async function getCCSubtitle(url){
   return{title,script,count:lines.body.length};
 }
 
-async function loadFFmpeg(){
-  if(window._ff){return window._ff}
-  const{createFFmpeg}=await import('https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/ffmpeg.min.js');
-  window._ff=createFFmpeg({log:false});await window._ff.load();return window._ff;
-}
-
-async function ocrFrame(b64,token,seen,results,t){
-  try{const r=await fetchPOST(`https://aip.baidubce.com/rest/2.0/ocr/v1/general_basic?access_token=${token}`,{image:b64});
-  const d=await r.json();if(d.words_result){const text=d.words_result.map(w=>w.words).join(' ').trim();
-  if(text&&!seen.has(text)){seen.add(text);const m=Math.floor(t/60),s=Math.floor(t%60);results.push(`[${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}] ${text}`);}}}catch(e){}
-}
-
-function toBase64Chunked(bytes){let b64='';for(let i=0;i<bytes.length;i+=65536)b64+=btoa(String.fromCharCode(...bytes.slice(i,i+65536)));return b64;}
-
 async function baiduOCR(file,progress){
   const token=await getBaiduToken();if(!token)return'';
-  progress.innerText='⏳ 加载ffmpeg...';
-  const ff=await loadFFmpeg();
-  const buf=new Uint8Array(await file.arrayBuffer());ff.FS('writeFile','in.mp4',buf);
-  progress.innerText='⏳ 获取视频信息...';
-  await ff.run('-i','in.mp4','-f','null','/dev/null');
-  const dur=parseFloat([...ff.FS('readFile','/dev/null')].reduce((a,b)=>a+b,0)===0?'0':'');
-  // 每0.5秒提取一帧
+  const video=document.createElement('video');video.muted=true;
+  video.src=URL.createObjectURL(file);
+  await new Promise((r,j)=>{video.onloadedmetadata=r;video.onerror=j;setTimeout(r,5000)});
+  await new Promise(r=>setTimeout(r,800));
+  if(!video.videoWidth||!video.videoHeight){
+    URL.revokeObjectURL(video.src);
+    return'视频格式不兼容，请用Chrome浏览器打开本页面。';
+  }
+  const dur=video.duration,canvas=document.createElement('canvas'),ctx=canvas.getContext('2d');
+  canvas.width=video.videoWidth;canvas.height=video.videoHeight;
   const seen=new Set(),results=[];
-  const info=await new Promise(r=>{const fn='info.txt';ff.FS('writeFile',fn,'');ff.run('-i','in.mp4','-f','ffmetadata',fn).then(()=>{r('')})});
-  let vw=640,vh=360;//默认尺寸
-  ff.run('-i','in.mp4','-vf','fps=1/0.5:round=down','-s','640x360','-q:v','5','frames/%03d.jpg').then(async()=>{
-    const files=Object.keys(ff.FS('readdir','/')).filter(f=>f.endsWith('.jpg')).sort();
-    const total=files.length;
-    for(let i=0;i<total;i++){
-      if(i%6===0)progress.innerText=`⏳ OCR识别... ${Math.round(i/total*100)}%`;
-      const jpg=ff.FS('readFile','frames/'+files[i]);const b64=toBase64Chunked(jpg);
-      const t=i*0.5+0.25;await ocrFrame(b64,token,seen,results,t);
-      ff.FS('unlink','frames/'+files[i]);
-    }
-  });
-  // 等待ffmpeg完成
-  await new Promise(r=>setTimeout(r,Math.max(5000,dur*2*1000)));
-  ff.FS('unlink','in.mp4');try{ff.FS('unlink','frames')}catch(e){}
-  return results.length?results.join('\n'):'OCR未识别到文字，请确认视频有字幕或画面中有文字';
+  for(let t=0.5;t<dur;t+=0.5){
+    if(Math.floor(t)%3===0)progress.innerText=`⏳ OCR识别... ${Math.round(t/dur*100)}%`;
+    video.currentTime=t;
+    try{await new Promise((r,j)=>{const h=()=>{video.removeEventListener('seeked',h);r()};video.addEventListener('seeked',h);setTimeout(r,3000)});}catch(e){break}
+    ctx.drawImage(video,0,0);
+    const h=canvas.height,crop=document.createElement('canvas');crop.width=canvas.width;crop.height=Math.floor(h*0.18);
+    crop.getContext('2d').drawImage(canvas,0,Math.floor(h*0.82),canvas.width,Math.floor(h*0.18),0,0,crop.width,crop.height);
+    const blob=await new Promise(r=>crop.toBlob(r,'image/jpeg',0.6));
+    if(!blob)continue;
+    const b64=await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result.split(',')[1]);fr.readAsDataURL(blob)});
+    try{const r=await fetchPOST(`https://aip.baidubce.com/rest/2.0/ocr/v1/general_basic?access_token=${token}`,{image:b64});
+    const d=await r.json();if(d.words_result){const text=d.words_result.map(w=>w.words).join(' ').trim();
+    if(text&&!seen.has(text)){seen.add(text);const m=Math.floor(t/60),s=Math.floor(t%60);results.push(`[${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}] ${text}`);}}}catch(e){}
+  }
+  URL.revokeObjectURL(video.src);
+  return results.length?results.join('\n'):'OCR未识别到文字，请确认视频画面中有字幕';
 }
 
-async function baiduASR(file,progress){
+async function baiduASR(audioFile,progress){
+  if(!audioFile)return'';
   const token=await getASRToken();if(!token)return'';
-  progress.innerText='⏳ 提取音频（ffmpeg.wasm，首次加载约30MB）...';
-
-  // 动态加载 ffmpeg.wasm
-  if(!window.FFmpeg){const{createFFmpeg}=await import('https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/ffmpeg.min.js');
-    window.FFmpeg=createFFmpeg({log:false});await window.FFmpeg.load();}
-  const ffmpeg=window.FFmpeg;
-
-  const buf=await file.arrayBuffer();
-  ffmpeg.FS('writeFile','input.mp4',new Uint8Array(buf));
-  await ffmpeg.run('-i','input.mp4','-vn','-acodec','pcm_s16le','-ar','16000','-ac','1','-f','s16le','output.pcm');
-  const pcm=ffmpeg.FS('readFile','output.pcm');
-  ffmpeg.FS('unlink','input.mp4');ffmpeg.FS('unlink','output.pcm');
-
-  const i16=new Int16Array(pcm.buffer,pcm.byteOffset,pcm.byteLength/2);
+  progress.innerText='⏳ 解码音频...';
+  const buf=await audioFile.arrayBuffer();
+  const ctx=new OfflineAudioContext({numberOfChannels:1,length:44100,sampleRate:16000});
+  try{var ab=await ctx.decodeAudioData(buf);}catch(e){return'音频解码失败，请上传mp3或wav格式的音频文件';}
+  if(!ab||ab.duration<1)return'音频过短';
+  const off=new OfflineAudioContext({numberOfChannels:1,length:Math.ceil(ab.duration*16000),sampleRate:16000});
+  const src=off.createBufferSource();src.buffer=ab;src.connect(off.destination);src.start();
+  const rendered=await off.startRendering(),samples=rendered.getChannelData(0);
+  const i16=new Int16Array(samples.length);
+  for(let i=0;i<samples.length;i++)i16[i]=Math.max(-32768,Math.min(32767,samples[i]*32767));
   const results=[],chunk=60*16000;
   for(let i=0;i<i16.length;i+=chunk){
     progress.innerText=`⏳ 语音识别... ${Math.round(i/i16.length*100)}%`;
-    const seg=i16.slice(i,i+chunk),bytes=new Uint8Array(seg.buffer);
-    const b64=toBase64Chunked(bytes);
+    const seg=i16.slice(i,i+chunk);
+    let b64='';const bytes=new Uint8Array(seg.buffer);
+    for(let j=0;j<bytes.length;j+=65536)b64+=btoa(String.fromCharCode(...bytes.slice(j,j+65536)));
     try{const r=await fetchJSON(`https://vop.baidu.com/server_api?dev_pid=1537&cuid=web&token=${token}`,{format:"pcm",rate:16000,channel:1,speech:b64,len:seg.length*2});
     const text=((await r.json()).result||[]).join('');if(text)results.push(text)}catch(e){}
   }
@@ -165,17 +161,19 @@ async function baiduASR(file,progress){
 }
 
 async function process(){
-  const url=document.getElementById('url').value.trim(),file=document.getElementById('video').files[0];
+  const url=document.getElementById('url').value.trim();
+  const videoFile=document.getElementById('video').files[0];
+  const audioFile=document.getElementById('audio').files[0];
   const useOCR=document.getElementById('ocr').checked,useASR=document.getElementById('asr').checked;
   const results=[],progress=document.querySelector('#loading');
   document.getElementById('result').style.display='none';progress.style.display='block';
   document.getElementById('btn').disabled=true;
   try{
-    if(url){const cc=await getCCSubtitle(url);if(cc)results.push(`## 📺 ${cc.title}\n\n### ✅ B站CC字幕（${cc.count}条）\n${cc.script}`);else results.push('## ⚠️ 无CC字幕\n请上传视频使用OCR或语音识别');}
-    if(file&&useOCR){const ocrText=await baiduOCR(file,progress);if(ocrText)results.push('### 🖼️ OCR画面字幕\n'+ocrText);}
-    if(file&&useASR){const asrText=await baiduASR(file,progress);if(asrText)results.push('### 🎙️ 语音识别\n'+asrText);}
+    if(url){const cc=await getCCSubtitle(url);if(cc)results.push(`## 📺 ${cc.title}\n\n### ✅ B站CC字幕（${cc.count}条）\n${cc.script}`);else results.push('## ⚠️ 无CC字幕');}
+    if(videoFile&&useOCR){progress.innerText='⏳ OCR识别...';const ocrText=await baiduOCR(videoFile,progress);if(ocrText&&!ocrText.startsWith('OCR'))results.push('### 🖼️ OCR画面字幕\n'+ocrText);else if(ocrText)results.push('⚠️ '+ocrText);}
+    if(audioFile&&useASR){progress.innerText='⏳ 语音识别...';const asrText=await baiduASR(audioFile,progress);if(asrText)results.push('### 🎙️ 语音识别\n'+asrText);}
     progress.style.display='none';document.getElementById('result').style.display='block';
-    document.getElementById('result').textContent=results.length?results.join('\n\n---\n'):'请粘贴B站链接或上传视频文件';
+    document.getElementById('result').textContent=results.length?results.join('\n\n---\n'):'请粘贴B站链接、上传视频(OCR)或上传音频(语音识别)';
   }catch(e){
     progress.style.display='none';document.getElementById('result').style.display='block';
     document.getElementById('result').textContent='❌ 失败：'+e.message;
