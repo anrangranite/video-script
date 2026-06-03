@@ -128,25 +128,29 @@ async function baiduOCR(file,progress){
 }
 
 async function baiduASR(file,progress){
-  try{
   const token=await getASRToken();if(!token)return'';
-  progress.innerText='⏳ 提取音频...';
+  progress.innerText='⏳ 提取音频（ffmpeg.wasm，首次加载约30MB）...';
+
+  // 动态加载 ffmpeg.wasm
+  if(!window.FFmpeg){const{createFFmpeg}=await import('https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/ffmpeg.min.js');
+    window.FFmpeg=createFFmpeg({log:false});await window.FFmpeg.load();}
+  const ffmpeg=window.FFmpeg;
+
   const buf=await file.arrayBuffer();
-  const audioCtx=new OfflineAudioContext({numberOfChannels:1,length:44100,sampleRate:16000});
-  let ab;try{ab=await audioCtx.decodeAudioData(buf);}catch(e){return'音频解码失败（该视频音轨浏览器不支持），请先用OCR提取字幕';}
-  if(!ab||ab.duration<0.1)return'音频过短';
-  const off=new OfflineAudioContext({numberOfChannels:1,length:Math.ceil(ab.duration*16000),sampleRate:16000}),src=off.createBufferSource();src.buffer=ab;src.connect(off.destination);src.start();
-  const rendered=await off.startRendering(),samples=rendered.getChannelData(0),i16=new Int16Array(samples.length);
-  for(let i=0;i<samples.length;i++)i16[i]=Math.max(-32768,Math.min(32767,samples[i]*32767));
+  ffmpeg.FS('writeFile','input.mp4',new Uint8Array(buf));
+  await ffmpeg.run('-i','input.mp4','-vn','-acodec','pcm_s16le','-ar','16000','-ac','1','-f','s16le','output.pcm');
+  const pcm=ffmpeg.FS('readFile','output.pcm');
+  ffmpeg.FS('unlink','input.mp4');ffmpeg.FS('unlink','output.pcm');
+
+  const i16=new Int16Array(pcm.buffer,pcm.byteOffset,pcm.byteLength/2);
   const results=[],chunk=60*16000;
   for(let i=0;i<i16.length;i+=chunk){
-    const pct=Math.round(i/i16.length*100);progress.innerText=`⏳ 语音识别... ${pct}%`;
+    progress.innerText=`⏳ 语音识别... ${Math.round(i/i16.length*100)}%`;
     const seg=i16.slice(i,i+chunk),b64=btoa(String.fromCharCode(...new Uint8Array(seg.buffer)));
-    const r=await fetchJSON(`https://vop.baidu.com/server_api?dev_pid=1537&cuid=web&token=${token}`,{format:"pcm",rate:16000,channel:1,speech:b64,len:seg.length*2});
-    const text=((await r.json()).result||[]).join('');if(text)results.push(text);
+    try{const r=await fetchJSON(`https://vop.baidu.com/server_api?dev_pid=1537&cuid=web&token=${token}`,{format:"pcm",rate:16000,channel:1,speech:b64,len:seg.length*2});
+    const text=((await r.json()).result||[]).join('');if(text)results.push(text)}catch(e){}
   }
-  return results.join('\n');
-  }catch(e){return'语音识别失败：'+e.message;}
+  return results.join('\n')||'';
 }
 
 async function process(){
