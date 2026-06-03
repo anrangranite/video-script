@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>视频剧本提取器</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#f5f0eb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh;padding:20px}
+.container{max-width:800px;margin:0 auto}
+h1{text-align:center;font-size:1.6rem;color:#2d1b0e;margin:20px 0 10px}
+.sub{text-align:center;color:#8b7355;margin-bottom:24px;font-size:.85rem}
+.card{background:#fff;border-radius:12px;padding:24px;box-shadow:0 2px 12px rgba(0,0,0,0.06);margin-bottom:16px}
+label{display:block;font-size:.85rem;color:#5c4a3a;margin-bottom:4px;font-weight:500}
+input,select{width:100%;padding:10px 14px;border:1.5px solid #e0d5c7;border-radius:8px;font-size:.9rem;outline:none;margin-bottom:12px;font-family:inherit}
+.btn{width:100%;padding:14px;background:linear-gradient(135deg,#8b5e3c,#a0724e);color:#fff;border:none;border-radius:10px;font-size:1.1rem;cursor:pointer;font-weight:600;letter-spacing:1px;margin-bottom:8px}
+.btn:disabled{opacity:0.6;pointer-events:none}
+.btn2{background:linear-gradient(135deg,#4a6fa5,#6b8fc5)}
+.file-area{border:2px dashed #e0d5c7;border-radius:10px;padding:30px;text-align:center;cursor:pointer;margin-bottom:12px;transition:.2s}
+.file-area:hover{border-color:#c4a882;background:#fdfbf7}
+.file-area input{display:none}
+.result{white-space:pre-wrap;line-height:1.8;font-size:.9rem;color:#3d2b1a;background:#fdfbf7;border:1.5px solid #e8ddd0;padding:20px;border-radius:10px;min-height:200px}
+.loading{text-align:center;color:#a0896e;padding:40px 0;display:none}
+.empty{text-align:center;color:#c4b8a7;padding:60px 0}
+.opt-row{display:flex;gap:12px;align-items:center;margin-bottom:12px}
+.opt-row label{display:flex;align-items:center;gap:6px;margin:0;font-size:.8rem;cursor:pointer}
+</style>
+</head>
+<body>
+<div class="container">
+<h1>📺 视频剧本提取器</h1>
+<p class="sub">B站CC字幕 + 百度云OCR画面识别 | 免费</p>
+
+<div class="card">
+  <div style="margin-bottom:12px">
+    <label>B站视频链接（优先使用CC字幕）</label>
+    <input id="url" placeholder="https://www.bilibili.com/video/BV1xx... 或 https://b23.tv/xxx">
+  </div>
+  <div class="file-area" onclick="document.getElementById('video').click()">
+    <input type="file" id="video" accept="video/*,.mp4,.mkv,.avi,.mov">
+    <div style="font-size:2.5rem;margin-bottom:8px">📁</div>
+    <div style="color:#8b7355;font-size:.9rem">点击上传视频文件（OCR画面字幕）</div>
+    <div id="filename" style="color:#a0896e;font-size:.8rem;margin-top:5px"></div>
+  </div>
+  <div class="opt-row">
+    <label><input type="checkbox" id="ocr" checked> 百度云OCR（限免1000次/月）</label>
+    <label><input type="checkbox" id="whisper"> 百度语音识别（每天5万次免费）</label>
+  </div>
+  <button class="btn" id="btn" onclick="process()">✨ 开始提取</button>
+</div>
+
+<div class="card">
+  <div id="result" class="empty">👆 粘贴B站链接或上传视频文件后点击开始</div>
+  <div id="loading" class="loading">⏳ 处理中，请耐心等待...</div>
+</div>
+<p style="text-align:center;color:#c4b8a7;font-size:.75rem;margin-top:10px">本地运行 · 无需服务器 · 百度OCR免费额度</p>
+</div>
+
+<script>
+const B_KEY = "nbDfosvp1R3WK2TEndosnJJQ";
+const B_SECRET = "ibae16pQGk0xf6CbIXSqPaZyMRB7p916";
+const ASR_KEY = "5Q6ZsxtbejdtDSC3Hlu4fV9P";
+const ASR_SECRET = "ZILps5tRz1IgFi16XRdJqJlhCzsxem3t";
+
+document.getElementById('video').addEventListener('change', function(e){
+  document.getElementById('filename').textContent = e.target.files[0]?.name || '';
+});
+
+async function getBaiduToken(){
+  const r = await fetch(`https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials&client_id=${B_KEY}&client_secret=${B_SECRET}`, {method:'POST'});
+  const d = await r.json();
+  return d.access_token || '';
+}
+
+function extractBV(url){
+  const m = url.match(/BV[\w]{10}/);
+  return m ? m[0] : url;
+}
+
+async function getCCSubtitle(url){
+  const bv = extractBV(url);
+  const headers = {"User-Agent":"Mozilla/5.0","Referer":"https://www.bilibili.com"};
+  const info = await fetch(`https://api.bilibili.com/x/web-interface/view?bvid=${bv}`,{headers}).then(r=>r.json());
+  const cid = info.data.cid, title = info.data.title;
+  const sub = await fetch(`https://api.bilibili.com/x/player/v2?bvid=${bv}&cid=${cid}`,{headers}).then(r=>r.json());
+  const subs = sub.data.subtitle.subtitles;
+  if(!subs.length) return null;
+  let u = subs[0].subtitle_url;
+  if(u.startsWith('//')) u = 'https:' + u;
+  const lines = await fetch(u).then(r=>r.json());
+  const script = lines.body.map(l=>{
+    const m=Math.floor(l.from/60),s=Math.floor(l.from%60);
+    return `[${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}] ${l.content}`;
+  }).join('\n');
+  return {title, script, count: lines.body.length};
+}
+
+async function baiduOCR(file, progress){
+  const token = await getBaiduToken();
+  if(!token) return '❌ 获取百度Token失败';
+
+  const video = document.createElement('video');
+  video.src = URL.createObjectURL(file);
+  await new Promise((r)=>{video.addEventListener('loadedmetadata',r);video.load()});
+  const duration = video.duration, fps = 24, totalFrames = Math.floor(duration * fps);
+
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  const seen = new Set();
+  const results = [];
+
+  for(let fn=0; fn<totalFrames; fn+=Math.max(1,Math.floor(fps*0.5))){
+    if(fn%(Math.floor(fps*3))===0){
+      progress.innerText = `⏳ 百度OCR识别中... ${Math.round(fn/totalFrames*100)}%`;
+    }
+    video.currentTime = fn/fps;
+    await new Promise(r=>video.addEventListener('seeked',r,{once:true}));
+    ctx.drawImage(video, 0, 0);
+    const h = canvas.height;
+    const imgData = ctx.getImageData(0, Math.floor(h*0.82), canvas.width, Math.floor(h*0.18));
+    const cropCanvas = document.createElement('canvas');
+    cropCanvas.width = imgData.width; cropCanvas.height = imgData.height;
+    cropCanvas.getContext('2d').putImageData(imgData,0,0);
+    const blob = await new Promise(r=>cropCanvas.toBlob(r,'image/jpeg',0.7));
+    const reader = new FileReader();
+    const base64 = await new Promise(r=>{reader.onload=()=>r(reader.result.split(',')[1]);reader.readAsDataURL(blob)});
+
+    try{
+      const r = await fetch(`https://aip.baidubce.com/rest/2.0/ocr/v1/general_basic?access_token=${token}`,{
+        method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
+        body: new URLSearchParams({image:base64})
+      });
+      const d = await r.json();
+      if(d.words_result){
+        const text = d.words_result.map(w=>w.words).join(' ').trim();
+        if(text && !seen.has(text)){ seen.add(text); const m=Math.floor(video.currentTime/60),s=Math.floor(video.currentTime%60); results.push(`[${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}] ${text}`); }
+      }
+    }catch(e){}
+  }
+  URL.revokeObjectURL(video.src);
+  return results.join('\n');
+}
+
+async function getBaiduASRToken(){
+  const r = await fetch(`https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials&client_id=${ASR_KEY}&client_secret=${ASR_SECRET}`,{method:'POST'});
+  return (await r.json()).access_token || '';
+}
+
+async function baiduASR(audioBlob, token, sampleRate=16000){
+  const pcm = await new Promise(r=>{
+    const reader = new FileReader();
+    reader.onload = () => {
+      const buf = reader.result;
+      const pcm = new Int16Array(buf.byteLength/2);
+      // Simple WAV→PCM extraction (WAV header = 44 bytes)
+      const dv = new DataView(buf);
+      for(let i=0; i<pcm.length; i++) pcm[i] = dv.getInt16(44+i*2, true);
+      r(pcm);
+    };
+    reader.readAsArrayBuffer(audioBlob);
+  });
+  const base64 = btoa(String.fromCharCode(...new Uint8Array(pcm.buffer)));
+  const r = await fetch(`https://vop.baidu.com/server_api?dev_pid=1537&cuid=html_client&token=${token}`,{
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({format:'pcm',rate:sampleRate,channel:1,speech:base64,len:pcm.length*2})
+  });
+  const d = await r.json();
+  return (d.result||[]).join('') || '';
+}
+
+async function extractAudio(file, progress){
+  progress.innerText = '⏳ 提取音频中...';
+  const audioCtx = new OfflineAudioContext(1, 0, 16000);
+  const arrayBuf = await file.arrayBuffer();
+  const audioBuf = await audioCtx.decodeAudioData(arrayBuf);
+
+  // 重采样到 16kHz mono
+  const offline = new OfflineAudioContext(1, audioBuf.duration*16000, 16000);
+  const source = offline.createBufferSource();
+  source.buffer = audioBuf;
+  source.connect(offline.destination);
+  source.start();
+  const rendered = await offline.startRendering();
+  const samples = rendered.getChannelData(0);
+  const int16 = new Int16Array(samples.length);
+  for(let i=0; i<samples.length; i++) int16[i] = Math.max(-32768,Math.min(32767,samples[i]*32767));
+  return {samples:int16, duration:audioBuf.duration};
+}
+
+async function baiduASRFull(file, progress){
+  const token = await getBaiduASRToken();
+  if(!token) return '❌ ASR Token 获取失败';
+  progress.innerText = '⏳ 提取音频中...';
+  const {samples, duration} = await extractAudio(file, progress);
+
+  const chunkSize = 60 * 16000; // 60秒一批
+  const results = [];
+  for(let i=0; i*samples.length<chunkSize; i++){
+    const chunk = samples.slice(i*chunkSize, (i+1)*chunkSize);
+    const pct = Math.round((i*chunkSize/samples.length)*100);
+    progress.innerText = `⏳ 语音识别中... ${Math.min(pct,100)}%`;
+    // 转 PCM blob
+    const pcmBuf = new ArrayBuffer(chunk.length*2);
+    const dv = new DataView(pcmBuf);
+    for(let j=0;j<chunk.length;j++) dv.setInt16(j*2, chunk[j], true);
+    const text = await baiduASR(new Blob([pcmBuf]), token, 16000);
+    if(text) results.push(text);
+  }
+  return results.join('\n') ? results.join('\n') : '';
+}
+
+async function process(){
+  const url = document.getElementById('url').value.trim();
+  const file = document.getElementById('video').files[0];
+  const useOCR = document.getElementById('ocr').checked;
+  const results = [];
+
+  document.getElementById('result').style.display='none';
+  document.getElementById('loading').style.display='block';
+  document.getElementById('btn').disabled=true;
+
+  try{
+    if(url){
+      const cc = await getCCSubtitle(url);
+      if(cc) results.push(`## 📺 ${cc.title}\n\n### ✅ B站CC字幕（${cc.count}条）\n${cc.script}`);
+      else results.push('## ⚠️ 该视频无CC字幕\n请上传视频文件使用OCR识别。');
+    }
+    const progress = document.querySelector('#loading');
+    if(file && useOCR){
+      progress.innerText = '⏳ 百度OCR识别中...';
+      const ocrText = await baiduOCR(file, progress);
+      if(ocrText) results.push('### 🖼️ OCR画面字幕（百度云）\n' + ocrText);
+    }
+    if(file && document.getElementById('whisper').checked){
+      progress.innerText = '⏳ 百度语音识别中...';
+      const asrText = await baiduASRFull(file, progress);
+      if(asrText) results.push('### 🎙️ 语音识别（百度云）\n' + asrText);
+    }
+    document.getElementById('loading').style.display='none';
+    document.getElementById('result').style.display='block';
+    document.getElementById('result').textContent = results.length ? results.join('\n\n---\n') : '请粘贴B站链接或上传视频文件';
+  }catch(e){
+    document.getElementById('loading').style.display='none';
+    document.getElementById('result').style.display='block';
+    document.getElementById('result').textContent = '❌ 失败：' + e.message;
+  }
+  document.getElementById('btn').disabled=false;
+}
+</script>
+</body>
+</html>
