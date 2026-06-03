@@ -96,22 +96,25 @@ async function getCCSubtitle(url){
 }
 
 async function baiduOCR(file,progress){
-  const token=await getBaiduToken();if(!token)return'';
-  const video=document.createElement('video');video.preload='metadata';
-  video.src=URL.createObjectURL(file);video.load();
-  await new Promise(r=>{video.onloadeddata=r});
-  await new Promise(r=>setTimeout(r,500));
-  if(!video.videoWidth||!video.videoHeight)return'';
-  const dur=video.duration,canvas=document.createElement('canvas'),ctx=canvas.getContext('2d');
+  const token=await getBaiduToken();if(!token)return'OCR token失败';
+  const video=document.createElement('video');video.muted=true;
+  video.src=URL.createObjectURL(file);
+  await new Promise((r,j)=>{video.onloadedmetadata=r;video.onerror=j;setTimeout(r,3000)});
+  await new Promise(r=>setTimeout(r,1000));
+  if(!video.videoWidth||!video.videoHeight){URL.revokeObjectURL(video.src);return'视频无法解码，请转换为mp4(H.264)格式后重试';}
+  const dur=video.duration;if(!dur||dur<0.5){URL.revokeObjectURL(video.src);return'无法读取视频时长';}
+  const canvas=document.createElement('canvas'),ctx=canvas.getContext('2d');
   canvas.width=video.videoWidth;canvas.height=video.videoHeight;
   const seen=new Set(),results=[];
-  for(let t=0;t<dur;t+=0.5){
+  for(let t=0.1;t<dur;t+=0.5){
     if(Math.floor(t)%3===0)progress.innerText=`⏳ OCR识别... ${Math.round(t/dur*100)}%`;
-    video.currentTime=t;await new Promise(r=>video.addEventListener('seeked',r,{once:true}));
+    video.currentTime=t;
+    try{await new Promise((r,j)=>{const h=()=>{video.removeEventListener('seeked',h);r()};video.addEventListener('seeked',h);setTimeout(r,2000)});}catch(e){break}
     ctx.drawImage(video,0,0);const h=canvas.height;
     const crop=document.createElement('canvas');crop.width=canvas.width;crop.height=Math.floor(h*0.18);
     crop.getContext('2d').drawImage(canvas,0,Math.floor(h*0.82),canvas.width,Math.floor(h*0.18),0,0,crop.width,crop.height);
     const blob=await new Promise(r=>crop.toBlob(r,'image/jpeg',0.6));
+    if(!blob)continue;
     const b64=await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result.split(',')[1]);fr.readAsDataURL(blob)});
     try{
       const r=await fetchPOST(`https://aip.baidubce.com/rest/2.0/ocr/v1/general_basic?access_token=${token}`,{image:b64});
@@ -121,7 +124,7 @@ async function baiduOCR(file,progress){
     }catch(e){}
   }
   URL.revokeObjectURL(video.src);
-  return results.join('\n');
+  return results.length?results.join('\n'):'OCR未识别到文字，请确认视频有字幕';
 }
 
 async function baiduASR(file,progress){
