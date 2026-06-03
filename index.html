@@ -128,10 +128,14 @@ async function baiduOCR(file,progress){
 }
 
 async function baiduASR(file,progress){
+  try{
   const token=await getASRToken();if(!token)return'';
   progress.innerText='⏳ 提取音频...';
-  const audioCtx=new OfflineAudioContext(1,0,16000),buf=await file.arrayBuffer(),ab=await audioCtx.decodeAudioData(buf);
-  const off=new OfflineAudioContext(1,ab.duration*16000,16000),src=off.createBufferSource();src.buffer=ab;src.connect(off.destination);src.start();
+  const buf=await file.arrayBuffer();
+  const audioCtx=new OfflineAudioContext({numberOfChannels:1,length:44100,sampleRate:16000});
+  let ab;try{ab=await audioCtx.decodeAudioData(buf);}catch(e){return'音频解码失败（该视频音轨浏览器不支持），请先用OCR提取字幕';}
+  if(!ab||ab.duration<0.1)return'音频过短';
+  const off=new OfflineAudioContext({numberOfChannels:1,length:Math.ceil(ab.duration*16000),sampleRate:16000}),src=off.createBufferSource();src.buffer=ab;src.connect(off.destination);src.start();
   const rendered=await off.startRendering(),samples=rendered.getChannelData(0),i16=new Int16Array(samples.length);
   for(let i=0;i<samples.length;i++)i16[i]=Math.max(-32768,Math.min(32767,samples[i]*32767));
   const results=[],chunk=60*16000;
@@ -142,6 +146,7 @@ async function baiduASR(file,progress){
     const text=((await r.json()).result||[]).join('');if(text)results.push(text);
   }
   return results.join('\n');
+  }catch(e){return'语音识别失败：'+e.message;}
 }
 
 async function process(){
