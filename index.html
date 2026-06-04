@@ -94,8 +94,9 @@ async function asrDo(file,token,p,results){
   const v=document.createElement('video');v.src=URL.createObjectURL(file);
   await new Promise(r=>{v.onloadedmetadata=r;setTimeout(r,8000)});const dur=v.duration;if(!dur||dur<1)return;
   // MediaRecorder 录制播放中的音频
-  const stream=v.captureStream();if(!stream.getAudioTracks().length){URL.revokeObjectURL(v.src);return}
-  const chunks=[];const rec=new MediaRecorder(stream,{mimeType:'audio/webm;codecs=opus'});
+  const stream=v.captureStream();const audioTracks=stream.getAudioTracks();
+  if(!audioTracks.length){URL.revokeObjectURL(v.src);return}
+  const chunks=[];const rec=new MediaRecorder(stream);
   rec.ondataavailable=e=>{if(e.data.size>0)chunks.push(e.data)};
   rec.start(1000);v.play();
   for(let t=0;t<dur;t+=10){p(`录音中 ${Math.round(t/dur*100)}%`);await new Promise(r=>setTimeout(r,10000))}
