@@ -58,6 +58,7 @@ const AK="5Q6ZsxtbejdtDSC3Hlu4fV9P",AS="ZILps5tRz1IgFi16XRdJqJlhCzsxem3t";
 const PX="https://corsproxy.io/?";
 async function fp(url,data){return fetch(PX+encodeURIComponent(url),{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(data)})}
 async function fj(url,data){return fetch(PX+encodeURIComponent(url),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})}
+async function fjDirect(url,data){return fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify(data)})}
 async function tk(k,s){const r=await fp("https://aip.baidubce.com/oauth/2.0/token",{grant_type:"client_credentials",client_id:k,client_secret:s});return(await r.json()).access_token||''}
 function bv(u){const m=u.match(/BV[\w]{10}/);return m?m[0]:u}
 document.getElementById('video').addEventListener('change',e=>document.getElementById('filename').textContent=e.target.files[0]?.name||'');
@@ -91,26 +92,24 @@ async function ocrDo(file,token,p,results){
   URL.revokeObjectURL(v.src);
 }
 async function asrDo(file,token,p,results){
-  const v=document.createElement('video');v.volume=0;v.src=URL.createObjectURL(file);
-  await new Promise(r=>{v.onloadedmetadata=r;setTimeout(r,8000)});const dur=v.duration;if(!dur||dur<1)return;
-  // AudioContext 从播放中提取音频（volume=0静音但不阻断音频流）
-  const ctx=new AudioContext({sampleRate:16000}),src=ctx.createMediaElementSource(v);
-  const proc=ctx.createScriptProcessor(4096,1,1);src.connect(proc);proc.connect(ctx.destination);
-  const chunks=[];let total=0;proc.onaudioprocess=e=>{const d=e.inputBuffer.getChannelData(0);chunks.push(new Float32Array(d));total+=d.length};
-  v.play();
-  for(let t=0;t<dur;t+=10){p(`录音 ${Math.round(t/dur*100)}%`);await new Promise(r=>setTimeout(r,10000))}
-  v.pause();ctx.close();URL.revokeObjectURL(v.src);
-  if(total<16000)return;
-  // 合并所有采样为一个Int16Array
-  const all=new Int16Array(total);let pos=0;
-  for(const c of chunks){for(let j=0;j<c.length&&pos<total;j++)all[pos++]=Math.max(-32768,Math.min(32767,c[j]*32767))}
-  // 60秒一块发送ASR
+  // 直接解码视频文件的音轨
+  const buf=await file.arrayBuffer();
+  const ctx=new OfflineAudioContext({numberOfChannels:1,length:44100,sampleRate:16000});
+  try{var ab=await ctx.decodeAudioData(buf);}catch(e){return} // 音轨无法解码
+  if(!ab||ab.duration<1)return;
+  const dur=ab.duration;
+  p(`解码成功，${Math.round(dur)}秒，转PCM中...`);
+  const off=new OfflineAudioContext({numberOfChannels:1,length:Math.ceil(dur*16000),sampleRate:16000});
+  const src=off.createBufferSource();src.buffer=ab;src.connect(off.destination);src.start();
+  const rendered=await off.startRendering(),samples=rendered.getChannelData(0);
+  const total=samples.length,all=new Int16Array(total);
+  for(let i=0;i<total;i++)all[i]=Math.max(-32768,Math.min(32767,samples[i]*32767));
   const cs=60*16000;
   for(let i=0;i<total;i+=cs){
     const n=Math.min(cs,total-i);p(`ASR ${Math.round(i/total*100)}%`);
     let b64='';const bytes=new Uint8Array(all.buffer,i*2,n*2);
     for(let j=0;j<bytes.length;j+=65536)b64+=btoa(String.fromCharCode(...bytes.slice(j,j+65536)));
-    try{const r=await fj(`https://vop.baidu.com/server_api?dev_pid=1537&cuid=web&token=${token}`,{format:"pcm",rate:16000,channel:1,speech:b64,len:n*2});const text=((await r.json()).result||[]).join('');if(text)results.push(text)}catch(e){}
+    try{let r=await fjDirect(`https://vop.baidu.com/server_api?dev_pid=1537&cuid=web&token=${token}`,{format:"pcm",rate:16000,channel:1,speech:b64,len:n*2});if(!r.ok)r=await fj(`https://vop.baidu.com/server_api?dev_pid=1537&cuid=web&token=${token}`,{format:"pcm",rate:16000,channel:1,speech:b64,len:n*2});const text=((await r.json()).result||[]).join('');if(text)results.push(text)}catch(e){}
   }
 }
 async function process(){
