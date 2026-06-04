@@ -120,7 +120,8 @@ async function asrDo(file,token,p,results){
   if(total<16000*3)return;
   const cs=60*16000;
   for(let i=0;i<total;i+=cs){
-    const n=Math.min(cs,total-i);p(`ASR ${Math.round(i/total*100)}%`);
+    const n=Math.min(cs,total-i);if(n<48000)continue; //跳不足3秒
+    p(`ASR ${Math.round(Math.min(i+cs,total)/total*100)}%`);
     let b64='';const bytes=new Uint8Array(all.buffer,i*2,n*2);
     for(let j=0;j<bytes.length;j+=65536)b64+=btoa(String.fromCharCode(...bytes.slice(j,j+65536)));
     try{const r=await fj(`https://vop.baidu.com/server_api?dev_pid=1537&cuid=web&token=${token}`,{format:"pcm",rate:16000,channel:1,speech:b64,len:n*2});const text=((await r.json()).result||[]).join('');if(text)results.push(text)}catch(e){}
