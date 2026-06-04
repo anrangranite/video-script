@@ -55,10 +55,15 @@ input,select{width:100%;padding:10px 14px;border:1.5px solid #e0d5c7;border-radi
 <script>
 const BK="nbDfosvp1R3WK2TEndosnJJQ",BS="ibae16pQGk0xf6CbIXSqPaZyMRB7p916";
 const AK="5Q6ZsxtbejdtDSC3Hlu4fV9P",AS="ZILps5tRz1IgFi16XRdJqJlhCzsxem3t";
-const PX="https://corsproxy.io/?";
-async function fp(url,data){return fetch(PX+encodeURIComponent(url),{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(data)})}
-async function fj(url,data){return fetch(PX+encodeURIComponent(url),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})}
-async function fjDirect(url,data){return fetch(url,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify(data)})}
+const PX="https://api.allorigins.win/raw?url=";
+async function fp(url,data){
+  try{return await fetch(url,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(data)})}catch(e){}
+  return fetch(PX+encodeURIComponent(url),{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(data)})
+}
+async function fj(url,data){
+  try{return await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})}catch(e){}
+  return fetch(PX+encodeURIComponent(url),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})
+}
 async function tk(k,s){const r=await fp("https://aip.baidubce.com/oauth/2.0/token",{grant_type:"client_credentials",client_id:k,client_secret:s});return(await r.json()).access_token||''}
 function bv(u){const m=u.match(/BV[\w]{10}/);return m?m[0]:u}
 document.getElementById('video').addEventListener('change',e=>document.getElementById('filename').textContent=e.target.files[0]?.name||'');
