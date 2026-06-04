@@ -91,34 +91,25 @@ async function ocrDo(file,token,p,results){
   URL.revokeObjectURL(v.src);
 }
 async function asrDo(file,token,p,results){
-  const v=document.createElement('video');v.src=URL.createObjectURL(file);
+  const v=document.createElement('video');v.volume=0;v.src=URL.createObjectURL(file);
   await new Promise(r=>{v.onloadedmetadata=r;setTimeout(r,8000)});const dur=v.duration;if(!dur||dur<1)return;
-  // MediaRecorder 录制播放中的音频
-  const stream=v.captureStream();const audioTracks=stream.getAudioTracks();
-  if(!audioTracks.length){URL.revokeObjectURL(v.src);return}
-  const chunks=[];const rec=new MediaRecorder(stream);
-  rec.ondataavailable=e=>{if(e.data.size>0)chunks.push(e.data)};
-  rec.start(1000);v.play();
-  for(let t=0;t<dur;t+=10){p(`录音中 ${Math.round(t/dur*100)}%`);await new Promise(r=>setTimeout(r,10000))}
-  rec.stop();v.pause();await new Promise(r=>setTimeout(r,1000));
-  if(!chunks.length){URL.revokeObjectURL(v.src);return}
-  const blob=new Blob(chunks,{type:'audio/webm'}),buf=await blob.arrayBuffer();
-  URL.revokeObjectURL(v.src);
-  // 解码录制的音频
-  const ctx=new OfflineAudioContext({numberOfChannels:1,length:44100,sampleRate:16000});
-  try{var ab=await ctx.decodeAudioData(buf);}catch(e){try{var ab=await ctx.decodeAudioData(buf.slice(0));}catch(e2){return}}
-  if(!ab||ab.duration<1)return;
-  const off=new OfflineAudioContext({numberOfChannels:1,length:Math.ceil(ab.duration*16000),sampleRate:16000});
-  const src=off.createBufferSource();src.buffer=ab;src.connect(off.destination);src.start();
-  const rendered=await off.startRendering(),samples=rendered.getChannelData(0);
-  const i16=new Int16Array(samples.length);for(let i=0;i<samples.length;i++)i16[i]=Math.max(-32768,Math.min(32767,samples[i]*32767));
+  // AudioContext 从播放中提取音频（volume=0静音但不阻断音频流）
+  const ctx=new AudioContext({sampleRate:16000}),src=ctx.createMediaElementSource(v);
+  const proc=ctx.createScriptProcessor(4096,1,1);src.connect(proc);proc.connect(ctx.destination);
+  const chunks=[];let total=0;proc.onaudioprocess=e=>{const d=e.inputBuffer.getChannelData(0);chunks.push(new Float32Array(d));total+=d.length};
+  v.play();let off=0;
+  for(let t=0;t<dur;t+=10){p(`录音 ${Math.round(t/dur*100)}%`);await new Promise(r=>setTimeout(r,10000))}
+  v.pause();ctx.close();URL.revokeObjectURL(v.src);
+  if(!chunks.length)return;
+  // 合并PCM并发送ASR
   const cs=60*16000;
-  for(let i=0;i<i16.length;i+=cs){
-    p(`ASR ${Math.round(i/i16.length*100)}%`);
-    const seg=i16.slice(i,i+cs);let b64='';const bytes=new Uint8Array(seg.buffer);
-    for(let j=0;j<bytes.length;j+=65536)b64+=btoa(String.fromCharCode(...bytes.slice(j,j+65536)));
-    try{const r=await fj(`https://vop.baidu.com/server_api?dev_pid=1537&cuid=web&token=${token}`,{format:"pcm",rate:16000,channel:1,speech:b64,len:seg.length*2});
-    const text=((await r.json()).result||[]).join('');if(text)results.push(text)}catch(e){}
+  for(let i=0;i*4096<total;i+=Math.ceil(cs/4096)){
+    const start=i*4096,end=Math.min(start+cs,total);const n=end-start;if(n<16000)continue;
+    p(`ASR ${Math.round(i*4096/total*100)}%`);
+    const i16=new Int16Array(n);let si=0,s=0;
+    while(si<n&&s<chunks.length){const c=chunks[s],ci=i*4096-s*4096+si,copy=Math.min(n-si,4096);for(let j=0;j<copy;j++)i16[si+j]=Math.max(-32768,Math.min(32767,c[ci+j]*32767));si+=copy;if(si>=n)break;s++}
+    let b64='';const bytes=new Uint8Array(i16.buffer);for(let j=0;j<bytes.length;j+=65536)b64+=btoa(String.fromCharCode(...bytes.slice(j,j+65536)));
+    try{const r=await fj(`https://vop.baidu.com/server_api?dev_pid=1537&cuid=web&token=${token}`,{format:"pcm",rate:16000,channel:1,speech:b64,len:n*2});const text=((await r.json()).result||[]).join('');if(text)results.push(text)}catch(e){}
   }
 }
 async function process(){
