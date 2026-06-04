@@ -102,20 +102,22 @@ async function asrDo(file,token,p,results){
   const chunks=[];
   let rec;try{rec=new MediaRecorder(audioStream)}catch(e){rec=new MediaRecorder(stream)}
   rec.ondataavailable=e=>{if(e.data.size>0)chunks.push(e.data)};
-  rec.start(5000);v.play();
-  for(let t=0;t<dur;t+=10){p(`录音 ${Math.round(t/dur*100)}%`);await new Promise(r=>setTimeout(r,10000))}
+  rec.start(1000);v.play();
+  for(let t=0;t<dur;t+=5){p(`录音 ${Math.round(t/dur*100)}%`);await new Promise(r=>setTimeout(r,5000))}
   rec.stop();v.pause();await new Promise(r=>setTimeout(r,2000));v.remove();
   if(!chunks.length)return;
   const blob=new Blob(chunks),rBuf=await blob.arrayBuffer();
   // 解码录制的webm音频
   const ctx=new OfflineAudioContext({numberOfChannels:1,length:44100,sampleRate:16000});
   try{var ab=await ctx.decodeAudioData(rBuf);}catch(e){return}
-  if(!ab||ab.duration<1)return;
+  if(!ab||ab.duration<0.3)return;
   const off=new OfflineAudioContext({numberOfChannels:1,length:Math.ceil(ab.duration*16000),sampleRate:16000});
   const s=off.createBufferSource();s.buffer=ab;s.connect(off.destination);s.start();
   const rendered=await off.startRendering(),samples=rendered.getChannelData(0);
   const total=samples.length,all=new Int16Array(total);
   for(let i=0;i<total;i++)all[i]=Math.max(-32768,Math.min(32767,samples[i]*32767));
+  // 5秒起就能识别
+  if(total<16000*3)return;
   const cs=60*16000;
   for(let i=0;i<total;i+=cs){
     const n=Math.min(cs,total-i);p(`ASR ${Math.round(i/total*100)}%`);
