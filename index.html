@@ -127,12 +127,14 @@ async function process(){
   document.getElementById('result').style.display='none';document.getElementById('loading').style.display='block';
   document.getElementById('btn').disabled=true;
   try{
-    if(url){const c=await cc(url);if(c)res.push(`## 📺 ${c.title}\n### ✅ B站CC字幕（${c.n}条）\n${c.text}`);else res.push('⚠️ 无CC字幕')}
+    const dbg=[]; //调试信息
+    if(url){const c=await cc(url);if(c)res.push(`## 📺 ${c.title}\n### ✅ B站CC字幕（${c.n}条）\n${c.text}`);else dbg.push('CC字幕:无')}
     if(file){
       p('初始化...');
-      if(uo){const t=await tk(BK,BS);if(t){const r=[];await ocrDo(file,t,p,r);res.push(r.length?('### 🖼️ OCR画面字幕\n'+r.join('\n')):'⚠️ OCR未识别到文字（请确认画面有字幕）')}}
-      if(ua){p('语音识别需播放视频提取音频，请耐心等待...');const t2=await tk(AK,AS);if(t2){const r=[];await asrDo(file,t2,p,r);res.push(r.length?('### 🎙️ 语音识别\n'+r.join('\n')):'⚠️ 语音识别失败（请用Chrome浏览器）')}}
+      if(uo){dbg.push('OCR:开始');const t=await tk(BK,BS);dbg.push('OCR Token:'+(t?'OK':'失败'));if(t){const r=[];await ocrDo(file,t,p,r);dbg.push('OCR结果:'+r.length+'条');res.push(r.length?('### 🖼️ OCR画面字幕\n'+r.join('\n')):'⚠️ OCR未识别到文字')}}
+      if(ua){dbg.push('ASR:开始');const t2=await tk(AK,AS);dbg.push('ASR Token:'+(t2?'OK':'失败'));if(t2){const r=[];await asrDo(file,t2,p,r);dbg.push('ASR结果:'+r.length+'条');res.push(r.length?('### 🎙️ 语音识别\n'+r.join('\n')):'⚠️ ASR无结果')}}
     }
+    if(dbg.length)res.push('---\n🔍 调试：'+dbg.join(' | '));
     document.getElementById('loading').style.display='none';document.getElementById('result').style.display='block';
     document.getElementById('result').textContent=res.length?res.join('\n\n---\n'):'请粘贴B站链接或上传视频';
   }catch(e){document.getElementById('loading').style.display='none';document.getElementById('result').style.display='block';document.getElementById('result').textContent='❌ 失败：'+e.message}
