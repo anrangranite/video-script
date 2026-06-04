@@ -28,8 +28,7 @@ input,select{width:100%;padding:10px 14px;border:1.5px solid #e0d5c7;border-radi
 <body>
 <div class="container">
 <h1>📺 视频剧本提取器</h1>
-<p class="sub">上传视频 → 自动OCR画面字幕 + 语音识别 | Chrome浏览器</p>
-
+<p class="sub">上传视频 → OCR画面字幕 + 语音识别 · 一键完成</p>
 <div class="card">
   <div style="margin-bottom:12px">
     <label>B站视频链接（优先CC字幕，秒出）</label>
@@ -38,106 +37,101 @@ input,select{width:100%;padding:10px 14px;border:1.5px solid #e0d5c7;border-radi
   <div class="file-area" onclick="document.getElementById('video').click()">
     <input type="file" id="video" accept="video/*,.mp4,.mkv,.avi,.mov">
     <div style="font-size:2.8rem;margin-bottom:8px">📁</div>
-    <div style="color:#8b7355;font-size:.95rem">上传视频 → OCR字幕 + 语音识别</div>
+    <div style="color:#8b7355;font-size:.95rem">上传视频 → 自动提取字幕 + 语音</div>
     <div id="filename" style="color:#a0896e;font-size:.8rem;margin-top:5px"></div>
   </div>
   <div class="opt-row">
     <label><input type="checkbox" id="ocr" checked> OCR画面字幕</label>
-    <label><input type="checkbox" id="asr" checked> 语音识别</label>
+    <label><input type="checkbox" id="asr" checked> 语音识别（需等视频时长）</label>
   </div>
   <button class="btn" id="btn" onclick="process()">✨ 开始提取</button>
 </div>
-
 <div class="card">
   <div id="result" class="empty">👆 粘贴B站链接或上传视频后点击开始</div>
   <div id="loading" class="loading">⏳ 处理中...</div>
 </div>
-<p class="info">永久在线 · 无需服务器 · 百度云OCR+ASR · 免费使用</p>
+<p class="info">永久在线 · 无需服务器 · 百度云OCR+ASR · 免费</p>
 </div>
-
 <script>
-const B_KEY="nbDfosvp1R3WK2TEndosnJJQ",B_SECRET="ibae16pQGk0xf6CbIXSqPaZyMRB7p916";
-const ASR_KEY="5Q6ZsxtbejdtDSC3Hlu4fV9P",ASR_SECRET="ZILps5tRz1IgFi16XRdJqJlhCzsxem3t";
-
+const BK="nbDfosvp1R3WK2TEndosnJJQ",BS="ibae16pQGk0xf6CbIXSqPaZyMRB7p916";
+const AK="5Q6ZsxtbejdtDSC3Hlu4fV9P",AS="ZILps5tRz1IgFi16XRdJqJlhCzsxem3t";
+const PX="https://corsproxy.io/?";
+async function fp(url,data){return fetch(PX+encodeURIComponent(url),{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(data)})}
+async function fj(url,data){return fetch(PX+encodeURIComponent(url),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})}
+async function tk(k,s){const r=await fp("https://aip.baidubce.com/oauth/2.0/token",{grant_type:"client_credentials",client_id:k,client_secret:s});return(await r.json()).access_token||''}
+function bv(u){const m=u.match(/BV[\w]{10}/);return m?m[0]:u}
 document.getElementById('video').addEventListener('change',e=>document.getElementById('filename').textContent=e.target.files[0]?.name||'');
-
-async function fetchPOST(url,data){const p=`https://corsproxy.io/?${encodeURIComponent(url)}`;return fetch(p,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(data)})}
-async function fetchJSON(url,data){const p=`https://corsproxy.io/?${encodeURIComponent(url)}`;return fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})}
-
-async function getBaiduToken(){const r=await fetchPOST("https://aip.baidubce.com/oauth/2.0/token",{grant_type:"client_credentials",client_id:B_KEY,client_secret:B_SECRET});return(await r.json()).access_token||''}
-async function getASRToken(){const r=await fetchPOST("https://aip.baidubce.com/oauth/2.0/token",{grant_type:"client_credentials",client_id:ASR_KEY,client_secret:ASR_SECRET});return(await r.json()).access_token||''}
-function extractBV(u){const m=u.match(/BV[\w]{10}/);return m?m[0]:u}
-
-async function getCC(url){
-  const bv=extractBV(url),h={"User-Agent":"Mozilla/5.0","Referer":"https://www.bilibili.com"};
-  const i=await fetch(`https://api.bilibili.com/x/web-interface/view?bvid=${bv}`,{h}).then(r=>r.json());
+async function cc(url){
+  const h={"User-Agent":"Mozilla/5.0","Referer":"https://www.bilibili.com"},b=bv(url);
+  const i=await fetch(`https://api.bilibili.com/x/web-interface/view?bvid=${b}`,{h}).then(r=>r.json());
   const cid=i.data.cid,title=i.data.title;
-  const s=await fetch(`https://api.bilibili.com/x/player/v2?bvid=${bv}&cid=${cid}`,{h}).then(r=>r.json());
+  const s=await fetch(`https://api.bilibili.com/x/player/v2?bvid=${b}&cid=${cid}`,{h}).then(r=>r.json());
   if(!s.data.subtitle.subtitles.length)return null;
   let u=s.data.subtitle.subtitles[0].subtitle_url;if(u.startsWith('//'))u='https:'+u;
   const lines=await fetch(u).then(r=>r.json());
   return{title,text:lines.body.map(l=>{const m=Math.floor(l.from/60),s=Math.floor(l.from%60);return`[${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}] ${l.content}`}).join('\n'),n:lines.body.length};
 }
-
-async function ocr(file,token,progress,results){
+async function ocrDo(file,token,p,results){
   const v=document.createElement('video');v.muted=true;v.src=URL.createObjectURL(file);
   await new Promise(r=>{v.onloadedmetadata=r;v.onerror=r;setTimeout(r,5000)});await new Promise(r=>setTimeout(r,800));
-  if(!v.videoWidth){return'视频格式不兼容，请用Chrome浏览器。'}
+  if(!v.videoWidth){return'请用Chrome浏览器'}
   const dur=v.duration,c=document.createElement('canvas'),x=c.getContext('2d');c.width=v.videoWidth;c.height=v.videoHeight;
   const seen=new Set();
   for(let t=0.5;t<dur;t+=0.5){
-    if(Math.floor(t)%3===0)progress(`OCR ${Math.round(t/dur*100)}%`);
+    if(Math.floor(t)%3===0)p(`OCR ${Math.round(t/dur*100)}%`);
     v.currentTime=t;await new Promise(r=>{const h=()=>{v.removeEventListener('seeked',h);r()};v.addEventListener('seeked',h);setTimeout(r,3000)});
-    x.drawImage(v,0,0);const h=v.videoHeight;
-    const cr=document.createElement('canvas');cr.width=v.videoWidth;cr.height=Math.floor(h*0.18);
+    x.drawImage(v,0,0);const h=v.videoHeight,cr=document.createElement('canvas');cr.width=v.videoWidth;cr.height=Math.floor(h*0.18);
     cr.getContext('2d').drawImage(c,0,Math.floor(h*0.82),v.videoWidth,Math.floor(h*0.18),0,0,cr.width,cr.height);
     const blob=await new Promise(r=>cr.toBlob(r,'image/jpeg',0.6));if(!blob)continue;
     const b64=await new Promise(r=>{const f=new FileReader();f.onload=()=>r(f.result.split(',')[1]);f.readAsDataURL(blob)});
-    try{const r=await fetchPOST(`https://aip.baidubce.com/rest/2.0/ocr/v1/general_basic?access_token=${token}`,{image:b64});
+    try{const r=await fp(`https://aip.baidubce.com/rest/2.0/ocr/v1/general_basic?access_token=${token}`,{image:b64});
     const d=await r.json();if(d.words_result){const t=d.words_result.map(w=>w.words).join(' ').trim();
     if(t&&!seen.has(t)){seen.add(t);const mm=Math.floor(t/60),ss=Math.floor(t%60);results.push(`[${String(mm).padStart(2,'0')}:${String(ss).padStart(2,'0')}] ${t}`);}}}catch(e){}
   }
   URL.revokeObjectURL(v.src);
 }
-
-async function asr(file,token,progress,results){
-  // 创建可见video + AudioContext提取音频
-  const v=document.createElement('video');v.muted=true;v.src=URL.createObjectURL(file);
-  await new Promise(r=>{v.onloadedmetadata=r;setTimeout(r,8000)});if(!v.duration)return;
-  const dur=v.duration,ctx=new AudioContext({sampleRate:16000});
-  const src=ctx.createMediaElementSource(v),proc=ctx.createScriptProcessor(4096,1,1);
-  src.connect(proc);proc.connect(ctx.destination);
-  const chunks=[];let total=0;proc.onaudioprocess=e=>{const d=e.inputBuffer.getChannelData(0);chunks.push(new Float32Array(d));total+=d.length};
-  v.play();let off=0;
-  for(let t=0;t<dur;t+=60){
-    await new Promise(r=>setTimeout(r,62000));
-    while(total-off>=960000||(t+60>=dur&&total>off)){
-      const n=Math.min(960000,total-off),i16=new Int16Array(n);let si=0,s=0;
-      while(si<n&&s<chunks.length){const c=chunks[s],ci=off-s*4096,cp=Math.min(n-si,4096-ci);for(let j=0;j<cp;j++)i16[si+j]=Math.max(-32768,Math.min(32767,c[ci+j]*32767));si+=cp;off+=cp;if(off>=(s+1)*4096)s++;}
-      progress(`ASR ${Math.round(t/dur*100)}%`);
-      let b64='';const bytes=new Uint8Array(i16.buffer);
-      for(let j=0;j<bytes.length;j+=65536)b64+=btoa(String.fromCharCode(...bytes.slice(j,j+65536)));
-      try{const r=await fetchJSON(`https://vop.baidu.com/server_api?dev_pid=1537&cuid=web&token=${token}`,{format:"pcm",rate:16000,channel:1,speech:b64,len:n*2});
-      const text=((await r.json()).result||[]).join('');if(text)results.push(text)}catch(e){}
-    }
+async function asrDo(file,token,p,results){
+  const v=document.createElement('video');v.src=URL.createObjectURL(file);
+  await new Promise(r=>{v.onloadedmetadata=r;setTimeout(r,8000)});const dur=v.duration;if(!dur||dur<1)return;
+  // MediaRecorder 录制播放中的音频
+  const stream=v.captureStream();if(!stream.getAudioTracks().length){URL.revokeObjectURL(v.src);return}
+  const chunks=[];const rec=new MediaRecorder(stream,{mimeType:'audio/webm;codecs=opus'});
+  rec.ondataavailable=e=>{if(e.data.size>0)chunks.push(e.data)};
+  rec.start(1000);v.play();
+  for(let t=0;t<dur;t+=10){p(`录音中 ${Math.round(t/dur*100)}%`);await new Promise(r=>setTimeout(r,10000))}
+  rec.stop();v.pause();await new Promise(r=>setTimeout(r,1000));
+  if(!chunks.length){URL.revokeObjectURL(v.src);return}
+  const blob=new Blob(chunks,{type:'audio/webm'}),buf=await blob.arrayBuffer();
+  URL.revokeObjectURL(v.src);
+  // 解码录制的音频
+  const ctx=new OfflineAudioContext({numberOfChannels:1,length:44100,sampleRate:16000});
+  try{var ab=await ctx.decodeAudioData(buf);}catch(e){try{var ab=await ctx.decodeAudioData(buf.slice(0));}catch(e2){return}}
+  if(!ab||ab.duration<1)return;
+  const off=new OfflineAudioContext({numberOfChannels:1,length:Math.ceil(ab.duration*16000),sampleRate:16000});
+  const src=off.createBufferSource();src.buffer=ab;src.connect(off.destination);src.start();
+  const rendered=await off.startRendering(),samples=rendered.getChannelData(0);
+  const i16=new Int16Array(samples.length);for(let i=0;i<samples.length;i++)i16[i]=Math.max(-32768,Math.min(32767,samples[i]*32767));
+  const cs=60*16000;
+  for(let i=0;i<i16.length;i+=cs){
+    p(`ASR ${Math.round(i/i16.length*100)}%`);
+    const seg=i16.slice(i,i+cs);let b64='';const bytes=new Uint8Array(seg.buffer);
+    for(let j=0;j<bytes.length;j+=65536)b64+=btoa(String.fromCharCode(...bytes.slice(j,j+65536)));
+    try{const r=await fj(`https://vop.baidu.com/server_api?dev_pid=1537&cuid=web&token=${token}`,{format:"pcm",rate:16000,channel:1,speech:b64,len:seg.length*2});
+    const text=((await r.json()).result||[]).join('');if(text)results.push(text)}catch(e){}
   }
-  v.pause();ctx.close();URL.revokeObjectURL(v.src);
 }
-
 async function process(){
   const url=document.getElementById('url').value.trim(),file=document.getElementById('video').files[0];
-  const useOCR=document.getElementById('ocr').checked,useASR=document.getElementById('asr').checked;
-  const res=[],prog=msg=>document.getElementById('loading').innerText=`⏳ ${msg}`;
+  const uo=document.getElementById('ocr').checked,ua=document.getElementById('asr').checked;
+  const res=[],p=msg=>document.getElementById('loading').innerText=`⏳ ${msg}`;
   document.getElementById('result').style.display='none';document.getElementById('loading').style.display='block';
   document.getElementById('btn').disabled=true;
   try{
-    if(url){const cc=await getCC(url);if(cc)res.push(`## 📺 ${cc.title}\n### ✅ B站CC字幕（${cc.n}条）\n${cc.text}`);else res.push('⚠️ 无CC字幕');}
+    if(url){const c=await cc(url);if(c)res.push(`## 📺 ${c.title}\n### ✅ B站CC字幕（${c.n}条）\n${c.text}`);else res.push('⚠️ 无CC字幕')}
     if(file){
-      prog('初始化...');
-      // OCR
-      if(useOCR){const t=await getBaiduToken();if(t){const r=[];await ocr(file,t,prog,r);if(r.length)res.push('### 🖼️ OCR画面字幕\n'+r.join('\n'));else res.push('⚠️ OCR未识别到文字');}}
-      // ASR - 实时播放提取音频
-      if(useASR){const t2=await getASRToken();if(t2){const r=[];prog('准备语音识别（播放视频提取音频，需等视频时长）...');await asr(file,t2,prog,r);if(r.length)res.push('### 🎙️ 语音识别\n'+r.join('\n'));else res.push('⚠️ ASR未获取到语音');}}
+      p('初始化...');
+      if(uo){const t=await tk(BK,BS);if(t){const r=[];await ocrDo(file,t,p,r);res.push(r.length?('### 🖼️ OCR画面字幕\n'+r.join('\n')):'⚠️ OCR未识别到文字（请确认画面有字幕）')}}
+      if(ua){p('语音识别需播放视频提取音频，请耐心等待...');const t2=await tk(AK,AS);if(t2){const r=[];await asrDo(file,t2,p,r);res.push(r.length?('### 🎙️ 语音识别\n'+r.join('\n')):'⚠️ 语音识别失败（请用Chrome浏览器）')}}
     }
     document.getElementById('loading').style.display='none';document.getElementById('result').style.display='block';
     document.getElementById('result').textContent=res.length?res.join('\n\n---\n'):'请粘贴B站链接或上传视频';
